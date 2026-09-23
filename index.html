@@ -1,22 +1,48 @@
-
-<!doctype HTML>
+<!DOCTYPE html>
 <html>
 <head>
-    <meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
-    
-    <script src="https://aframe.io/releases/1.3.0/aframe.min.js"></script>
-    <script src="https://raw.githack.com/AR-js-org/AR.js/master/aframe/build/aframe-ar.js"></script>
+  <meta charset="UTF-8">
+
+  <meta
+    name="viewport"
+    content="width=device-width, initial-scale=1.0, user-scalable=no"
+  >
+
+  <script src="https://aframe.io/releases/1.6.0/aframe.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@ar-js-org/ar.js@3.4.7/aframe/build/aframe-ar.js"></script>
+
+  <style>
+    body {
+      margin: 0;
+      overflow: hidden;
+    }
+  </style>
 </head>
-<body style='margin : 0px; overflow: hidden;'>
-    <a-scene embedded arjs='sourceType: webcam; debugUIEnabled: false; detectionMode: mono_and_matrix; matrixCodeType: 3x3;'>
 
-        <a-marker type='barcode' value='6'>
-            <a-box position='0 0.5 0' color="green"></a-box>
-        </a-marker>
+<body>
 
-        <a-entity camera></a-entity>
-    </a-scene>
-    Hello World !
+  <a-scene
+    embedded
+    arjs="sourceType: webcam;
+          debugUIEnabled: false;
+          detectionMode: mono_and_matrix;
+          matrixCodeType: 3x3;"
+    vr-mode-ui="enabled: false"
+    renderer="logarithmicDepthBuffer: true;"
+  >
+
+    <a-marker type="barcode" value="6">
+
+      <a-box
+        position="0 0.5 0"
+        color="green"
+      ></a-box>
+
+    </a-marker>
+
+    <a-entity camera></a-entity>
+
+  </a-scene>
+
 </body>
 </html>
-
