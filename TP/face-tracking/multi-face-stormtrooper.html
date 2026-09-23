@@ -1,0 +1,496 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Multi Face Stormtrooper</title>
+
+  <style>
+    html, body {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      overflow: hidden;
+      background: #000;
+    }
+
+    body {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    canvas {
+      position: fixed;
+      left: 50%;
+      top: 50%;
+      transform: translate(-50%, -50%) scaleX(-1);
+      transform-origin: center;
+      display: block;
+    }
+
+    #camera {
+      display: none;
+    }
+
+    #status {
+      position: fixed;
+      z-index: 10;
+      left: 50%;
+      bottom: 24px;
+      transform: translateX(-50%);
+      padding: 10px 14px;
+      border-radius: 999px;
+      color: white;
+      background: rgba(0, 0, 0, 0.62);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      font-size: 13px;
+      line-height: 1;
+      white-space: nowrap;
+      pointer-events: none;
+      transition: opacity .25s ease;
+    }
+
+    #status.hidden {
+      opacity: 0;
+    }
+
+    #startButton {
+      display: none;
+      position: fixed;
+      z-index: 20;
+      left: 50%;
+      top: 50%;
+      transform: translate(-50%, -50%);
+      border: 0;
+      border-radius: 999px;
+      padding: 14px 18px;
+      font: inherit;
+      font-weight: 650;
+      cursor: pointer;
+    }
+  </style>
+
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.180.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/"
+    }
+  }
+  </script>
+</head>
+
+<body>
+  <video id="camera" autoplay muted playsinline></video>
+  <div id="status">Initialisation…</div>
+  <button id="startButton" type="button">Activer la caméra</button>
+
+  <script type="module">
+    import * as THREE from "three";
+    import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+    import { clone as cloneSkinned } from "three/addons/utils/SkeletonUtils.js";
+    import {
+      FaceLandmarker,
+      FilesetResolver
+    } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.35/vision_bundle.mjs";
+
+    // ============================================================
+    // RÉGLAGES
+    // ============================================================
+    const CONFIG = {
+      // Nombre maximum de têtes suivies simultanément.
+      maxFaces: 4,
+
+      // Ton modèle actuel.
+      modelUrl: "./assets/helmet/scene.gltf",
+
+      // Échelle utilisée par l'exemple officiel MediaPipe/Three.js
+      // pour convertir la matrice faciale dans la scène.
+      faceMatrixScale: 40,
+
+      // Taille du casque après normalisation automatique du GLTF.
+      // Augmente si le casque est trop petit, baisse si trop grand.
+      helmetHeight: 0.62,
+
+      // Ajustements fins du casque par rapport au centre de la tête.
+      // Les valeurs sont dans l'espace local du visage.
+      helmetOffset: { x: 0.0, y: 0.00, z: 0.00 },
+
+      // Si ton GLTF regarde dans le mauvais sens, essaye y: 180.
+      helmetRotationDeg: { x: 0, y: 0, z: 0 },
+
+      // 0 = très lissé/lent ; 1 = suivi immédiat.
+      smoothing: 0.55,
+
+      // Webcam.
+      cameraWidth: 1280,
+      cameraHeight: 720
+    };
+
+    const video = document.querySelector("#camera");
+    const statusEl = document.querySelector("#status");
+    const startButton = document.querySelector("#startButton");
+
+    let faceLandmarker = null;
+    let scene = null;
+    let camera = null;
+    let renderer = null;
+    let helmetTemplate = null;
+    let faceRoots = [];
+    let lastVideoTime = -1;
+    let started = false;
+
+    function setStatus(message, hideAfter = false) {
+      statusEl.textContent = message;
+      statusEl.classList.remove("hidden");
+
+      if (hideAfter) {
+        window.setTimeout(() => statusEl.classList.add("hidden"), 1200);
+      }
+    }
+
+    function deg(value) {
+      return THREE.MathUtils.degToRad(value);
+    }
+
+    function getViewportSizeAtDepth(perspectiveCamera, depth) {
+      const height = 2 * depth * Math.tan(deg(perspectiveCamera.fov * 0.5));
+      return new THREE.Vector2(height * perspectiveCamera.aspect, height);
+    }
+
+    function resizeCanvasCSS() {
+      if (!renderer || !video.videoWidth || !video.videoHeight) return;
+
+      const videoAspect = video.videoWidth / video.videoHeight;
+      const viewportAspect = window.innerWidth / window.innerHeight;
+
+      let cssWidth;
+      let cssHeight;
+
+      // "cover" sans déformer la vidéo :
+      // on agrandit tout le canvas (vidéo + 3D) ensemble.
+      if (viewportAspect > videoAspect) {
+        cssWidth = window.innerWidth;
+        cssHeight = cssWidth / videoAspect;
+      } else {
+        cssHeight = window.innerHeight;
+        cssWidth = cssHeight * videoAspect;
+      }
+
+      renderer.domElement.style.width = `${cssWidth}px`;
+      renderer.domElement.style.height = `${cssHeight}px`;
+    }
+
+    async function openCamera() {
+      if (!navigator.mediaDevices?.getUserMedia) {
+        throw new Error("getUserMedia n'est pas disponible dans ce navigateur.");
+      }
+
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: false,
+        video: {
+          facingMode: "user",
+          width: { ideal: CONFIG.cameraWidth },
+          height: { ideal: CONFIG.cameraHeight }
+        }
+      });
+
+      video.srcObject = stream;
+
+      await new Promise((resolve) => {
+        if (video.readyState >= 1 && video.videoWidth) {
+          resolve();
+          return;
+        }
+        video.addEventListener("loadedmetadata", resolve, { once: true });
+      });
+
+      await video.play();
+      return stream;
+    }
+
+    async function createFaceLandmarker() {
+      const filesetResolver = await FilesetResolver.forVisionTasks(
+        "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.35/wasm"
+      );
+
+      return FaceLandmarker.createFromOptions(filesetResolver, {
+        baseOptions: {
+          modelAssetPath:
+            "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task",
+          delegate: "GPU"
+        },
+        runningMode: "VIDEO",
+        numFaces: CONFIG.maxFaces,
+        minFaceDetectionConfidence: 0.5,
+        minFacePresenceConfidence: 0.5,
+        minTrackingConfidence: 0.5,
+        outputFacialTransformationMatrixes: true,
+        outputFaceBlendshapes: false
+      });
+    }
+
+    function initThree() {
+      const sourceWidth = video.videoWidth || CONFIG.cameraWidth;
+      const sourceHeight = video.videoHeight || CONFIG.cameraHeight;
+
+      scene = new THREE.Scene();
+
+      camera = new THREE.PerspectiveCamera(
+        60,
+        sourceWidth / sourceHeight,
+        0.01,
+        5000
+      );
+      camera.position.set(0, 0, 0);
+      camera.lookAt(0, 0, -1);
+
+      renderer = new THREE.WebGLRenderer({
+        antialias: true,
+        powerPreference: "high-performance"
+      });
+
+      renderer.setPixelRatio(1);
+      renderer.setSize(sourceWidth, sourceHeight, false);
+      renderer.outputColorSpace = THREE.SRGBColorSpace;
+      renderer.toneMapping = THREE.ACESFilmicToneMapping;
+      renderer.toneMappingExposure = 1.15;
+
+      document.body.insertBefore(renderer.domElement, statusEl);
+
+      // Lumières pour le GLTF Stormtrooper.
+      scene.add(new THREE.AmbientLight(0xffffff, 1.5));
+
+      const key = new THREE.DirectionalLight(0xffffff, 2.6);
+      key.position.set(-2, 4, 3);
+      scene.add(key);
+
+      const fill = new THREE.DirectionalLight(0xffffff, 1.4);
+      fill.position.set(3, 1, 2);
+      scene.add(fill);
+
+      // La webcam devient directement le fond de la scène Three.js.
+      // Ainsi vidéo et objets 3D passent exactement par la même projection.
+      const videoTexture = new THREE.VideoTexture(video);
+      videoTexture.colorSpace = THREE.SRGBColorSpace;
+      videoTexture.minFilter = THREE.LinearFilter;
+      videoTexture.magFilter = THREE.LinearFilter;
+
+      const backgroundDepth = 500;
+      const viewportSize = getViewportSizeAtDepth(camera, backgroundDepth);
+
+      const planeGeometry = new THREE.PlaneGeometry(
+        viewportSize.x,
+        viewportSize.y
+      );
+      planeGeometry.translate(0, 0, -backgroundDepth);
+
+      const planeMaterial = new THREE.MeshBasicMaterial({
+        map: videoTexture,
+        depthWrite: false,
+        toneMapped: false
+      });
+
+      const background = new THREE.Mesh(planeGeometry, planeMaterial);
+      background.renderOrder = -1000;
+      scene.add(background);
+
+      resizeCanvasCSS();
+      window.addEventListener("resize", resizeCanvasCSS);
+    }
+
+    async function loadHelmet() {
+      const loader = new GLTFLoader();
+      const gltf = await loader.loadAsync(CONFIG.modelUrl);
+
+      helmetTemplate = gltf.scene;
+      helmetTemplate.updateMatrixWorld(true);
+
+      // Évite qu'un casque disparaisse à cause du frustum culling
+      // quand sa matrice change vite.
+      helmetTemplate.traverse((object) => {
+        if (object.isMesh) {
+          object.frustumCulled = false;
+        }
+      });
+
+      return helmetTemplate;
+    }
+
+    function createNormalizedHelmet(template) {
+      // SkeletonUtils.clone marche aussi si ton GLTF contient un squelette.
+      const model = cloneSkinned(template);
+
+      model.traverse((object) => {
+        if (object.isMesh) {
+          object.frustumCulled = false;
+        }
+      });
+
+      const holder = new THREE.Group();
+      holder.add(model);
+      holder.updateMatrixWorld(true);
+
+      // Normalisation automatique :
+      // peu importe la taille d'origine du GLTF, on le ramène à une
+      // hauteur cohérente avant de l'attacher au visage.
+      const box = new THREE.Box3().setFromObject(holder);
+      const size = box.getSize(new THREE.Vector3());
+      const center = box.getCenter(new THREE.Vector3());
+
+      model.position.x -= center.x;
+      model.position.y -= center.y;
+      model.position.z -= center.z;
+
+      const safeHeight = Math.max(size.y, 0.00001);
+      const normalizationScale = CONFIG.helmetHeight / safeHeight;
+
+      holder.scale.setScalar(normalizationScale);
+      holder.position.set(
+        CONFIG.helmetOffset.x,
+        CONFIG.helmetOffset.y,
+        CONFIG.helmetOffset.z
+      );
+      holder.rotation.set(
+        deg(CONFIG.helmetRotationDeg.x),
+        deg(CONFIG.helmetRotationDeg.y),
+        deg(CONFIG.helmetRotationDeg.z)
+      );
+
+      return holder;
+    }
+
+    function createFaceRoots() {
+      faceRoots = [];
+
+      for (let i = 0; i < CONFIG.maxFaces; i++) {
+        const root = new THREE.Group();
+        root.visible = false;
+
+        const helmet = createNormalizedHelmet(helmetTemplate);
+        root.add(helmet);
+
+        scene.add(root);
+        faceRoots.push(root);
+      }
+    }
+
+    function updateFaceRoot(root, matrixData, firstFrameForRoot) {
+      const matrix = new THREE.Matrix4().fromArray(matrixData);
+
+      // Même principe que l'exemple officiel MediaPipe :
+      // la rotation + position viennent de la matrice faciale.
+      matrix.scale(
+        new THREE.Vector3(
+          CONFIG.faceMatrixScale,
+          CONFIG.faceMatrixScale,
+          CONFIG.faceMatrixScale
+        )
+      );
+
+      const targetPosition = new THREE.Vector3();
+      const targetQuaternion = new THREE.Quaternion();
+      const targetScale = new THREE.Vector3();
+
+      matrix.decompose(
+        targetPosition,
+        targetQuaternion,
+        targetScale
+      );
+
+      if (firstFrameForRoot || !root.visible) {
+        root.position.copy(targetPosition);
+        root.quaternion.copy(targetQuaternion);
+        root.scale.copy(targetScale);
+      } else {
+        const s = THREE.MathUtils.clamp(CONFIG.smoothing, 0, 1);
+        root.position.lerp(targetPosition, s);
+        root.quaternion.slerp(targetQuaternion, s);
+        root.scale.lerp(targetScale, s);
+      }
+
+      root.visible = true;
+    }
+
+    function processFaces(now) {
+      if (!faceLandmarker || video.readyState < 2) return;
+
+      // Évite de recalculer deux fois la même frame vidéo.
+      if (video.currentTime === lastVideoTime) return;
+      lastVideoTime = video.currentTime;
+
+      const result = faceLandmarker.detectForVideo(video, now);
+      const matrices = result.facialTransformationMatrixes || [];
+
+      for (let i = 0; i < faceRoots.length; i++) {
+        const root = faceRoots[i];
+
+        if (i < matrices.length) {
+          const wasHidden = !root.visible;
+          updateFaceRoot(root, matrices[i].data, wasHidden);
+        } else {
+          root.visible = false;
+        }
+      }
+    }
+
+    function renderLoop(now) {
+      processFaces(now);
+      renderer.render(scene, camera);
+      requestAnimationFrame(renderLoop);
+    }
+
+    async function start() {
+      if (started) return;
+      started = true;
+
+      startButton.style.display = "none";
+      setStatus("Chargement de la caméra et du tracking…");
+
+      try {
+        // Le modèle MediaPipe et le GLTF peuvent charger en parallèle
+        // pendant que le navigateur demande l'autorisation caméra.
+        const landmarkerPromise = createFaceLandmarker();
+        const helmetPromise = loadHelmet();
+
+        await openCamera();
+        initThree();
+
+        [faceLandmarker, helmetTemplate] = await Promise.all([
+          landmarkerPromise,
+          helmetPromise
+        ]);
+
+        createFaceRoots();
+
+        setStatus(
+          `Prêt — jusqu'à ${CONFIG.maxFaces} visages`,
+          true
+        );
+
+        requestAnimationFrame(renderLoop);
+      } catch (error) {
+        console.error(error);
+        started = false;
+
+        let message = error?.message || String(error);
+
+        if (!window.isSecureContext) {
+          message =
+            "La caméra nécessite HTTPS ou localhost. Ouvre ce fichier via ton serveur local.";
+        }
+
+        setStatus(message);
+        startButton.style.display = "block";
+      }
+    }
+
+    startButton.addEventListener("click", start);
+
+    // Démarrage automatique.
+    // Le bouton reste disponible comme fallback pour Safari/iOS
+    // ou si le navigateur exige une interaction utilisateur.
+    start();
+  </script>
+</body>
+</html>

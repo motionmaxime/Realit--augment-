@@ -1,0 +1,943 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+
+  <title>MindAR Face Expressions Prototype</title>
+
+  <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-face-aframe.prod.js"></script>
+
+  <style>
+    html, body {
+      margin: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: black;
+
+    }
+
+    #status {
+      position: fixed;
+      left: 12px;
+      bottom: 12px;
+      z-index: 9999;
+
+      min-width: 220px;
+      padding: 10px 12px;
+
+      border-radius: 10px;
+
+      background: rgba(0, 0, 0, .68);
+      color: white;
+
+      font: 12px/1.45 system-ui, sans-serif;
+      white-space: pre-line;
+      pointer-events: none;
+    }
+
+    #legend {
+      position: fixed;
+      right: 12px;
+      bottom: 12px;
+      z-index: 9999;
+
+      padding: 10px 12px;
+      border-radius: 10px;
+
+      background: rgba(0, 0, 0, .58);
+      color: white;
+
+      font: 12px/1.45 system-ui, sans-serif;
+      pointer-events: none;
+    }
+  </style>
+</head>
+
+<body>
+
+  <div id="status">Initialisation…</div>
+
+  <div id="legend">
+    yeux → blink<br>
+    bouche → jawOpen / parole<br>
+    sourire → mouthSmile<br>
+    sourcils → browInnerUp
+  </div>
+
+
+  <a-scene
+    mindar-face
+    embedded
+    color-space="sRGB"
+    renderer="colorManagement: true; physicallyCorrectLights: true"
+    vr-mode-ui="enabled: false"
+    device-orientation-permission-ui="enabled: false"
+  >
+
+    <a-camera
+      active="false"
+      position="0 0 0"
+      look-controls="enabled: false"
+    ></a-camera>
+
+
+    <!--
+      MindAR gère :
+      - position de la tête
+      - rotation
+      - scale selon la taille du visage
+
+      Anchor 168 = zone centrale du visage,
+      utilisée également dans les exemples MindAR pour les lunettes.
+    -->
+    <a-entity
+      id="face-anchor"
+      mindar-face-target="anchorIndex: 168"
+    >
+
+      <!-- ===================================================== -->
+      <!-- TETE / MASQUE DE DEBUG                               -->
+      <!-- ===================================================== -->
+
+      <a-box
+        id="face-panel"
+        position="0 0 -0.12"
+        width="0.72"
+        height="0.54"
+        depth="0.08"
+        material="
+          color: #111827;
+          opacity: 0;
+          transparent: true;
+          roughness: 0.65;
+          metalness: 0.15
+        "
+      ></a-box>
+
+
+      <!-- ===================================================== -->
+      <!-- YEUX                                                 -->
+      <!-- ===================================================== -->
+
+      <a-box
+        id="eye-left"
+        position="-0.145 0.085 -0.175"
+        width="0.18"
+        height="0.060"
+        depth="0.025"
+        color="#00eaff"
+      ></a-box>
+
+      <a-box
+        id="eye-right"
+        position="0.145 0.085 -0.175"
+        width="0.18"
+        height="0.060"
+        depth="0.025"
+        color="#00eaff"
+      ></a-box>
+
+
+      <!-- ===================================================== -->
+      <!-- SOURCILS                                             -->
+      <!-- ===================================================== -->
+
+      <a-box
+        id="brow-left"
+        position="-0.145 0.165 -0.175"
+        rotation="0 0 -7"
+        width="0.19"
+        height="0.025"
+        depth="0.020"
+        color="#ffe600"
+      ></a-box>
+
+      <a-box
+        id="brow-right"
+        position="0.145 0.165 -0.175"
+        rotation="0 0 7"
+        width="0.19"
+        height="0.025"
+        depth="0.020"
+        color="#ffe600"
+      ></a-box>
+
+
+      <!-- ===================================================== -->
+      <!-- BOUCHE                                               -->
+      <!-- ===================================================== -->
+
+      <!-- cavité : s'agrandit avec jawOpen -->
+      <a-box
+        id="mouth-open"
+        position="0 -0.115 -0.178"
+        width="0.25"
+        height="0.025"
+        depth="0.026"
+        color="#ff1744"
+      ></a-box>
+
+
+      <!-- lèvres stylisées : se courbent avec le sourire -->
+      <a-box
+        id="mouth-left"
+        position="-0.065 -0.105 -0.195"
+        width="0.13"
+        height="0.024"
+        depth="0.022"
+        color="#ff1744"
+      ></a-box>
+
+      <a-box
+        id="mouth-right"
+        position="0.065 -0.105 -0.195"
+        width="0.13"
+        height="0.024"
+        depth="0.022"
+        color="#ff1744"
+      ></a-box>
+
+
+      <!-- ===================================================== -->
+      <!-- MACHOIRE DE DEBUG                                    -->
+      <!-- ===================================================== -->
+
+      <a-box
+        id="jaw"
+        position="0 -0.205 -0.145"
+        width="0.42"
+        height="0.065"
+        depth="0.065"
+        material="
+          color: #8b5cf6;
+          opacity: 0.75;
+          transparent: true
+        "
+      ></a-box>
+
+    </a-entity>
+
+  </a-scene>
+
+
+  <script type="module">
+
+    import {
+      FaceLandmarker,
+      FilesetResolver
+    } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.35/vision_bundle.mjs";
+
+
+    // ============================================================
+    // CONFIG
+    // ============================================================
+
+    const CONFIG = {
+
+      /*
+        Face Landmarker ne fait qu'une seule personne.
+        Google applique aussi son smoothing interne avec numFaces = 1.
+      */
+      numFaces: 1,
+
+      trackingFPS: 30,
+
+      /*
+        Lissage de nos valeurs d'expression.
+        Petit = très doux / plus lent.
+        Grand = réactif / plus nerveux.
+      */
+      expressionSmoothing: 0.34,
+
+      /*
+        Anti-flicker :
+        si MediaPipe perd momentanément le visage,
+        on garde la dernière expression valide.
+      */
+      holdLastExpressionMs: 700,
+
+      /*
+        Après holdLastExpressionMs, on revient doucement
+        vers un visage neutre au lieu de tout couper.
+      */
+      neutralReturnSpeed: 0.055,
+
+      /*
+        Avec une caméra selfie, les notions anatomiques
+        gauche/droite peuvent sembler inversées visuellement.
+        Passe à false si tes clignements sont croisés.
+      */
+      swapEyesForSelfie: true,
+
+      debugValues: true
+    };
+
+
+    // ============================================================
+    // DOM
+    // ============================================================
+
+    const sceneEl =
+      document.querySelector("a-scene");
+
+    const statusEl =
+      document.querySelector("#status");
+
+
+    const eyeLeftEl =
+      document.querySelector("#eye-left");
+
+    const eyeRightEl =
+      document.querySelector("#eye-right");
+
+    const browLeftEl =
+      document.querySelector("#brow-left");
+
+    const browRightEl =
+      document.querySelector("#brow-right");
+
+    const mouthOpenEl =
+      document.querySelector("#mouth-open");
+
+    const mouthLeftEl =
+      document.querySelector("#mouth-left");
+
+    const mouthRightEl =
+      document.querySelector("#mouth-right");
+
+    const jawEl =
+      document.querySelector("#jaw");
+
+
+    // ============================================================
+    // ETAT
+    // ============================================================
+
+    let video = null;
+    let faceLandmarker = null;
+
+    let lastVideoTime = -1;
+    let lastInferenceAt = 0;
+
+    let lastValidExpressionAt = 0;
+
+    let trackingStarted = false;
+
+
+    /*
+      target = dernière expression demandée par MediaPipe.
+      current = valeur effectivement utilisée pour l'animation.
+
+      Les objets 3D sont redessinés par A-Frame en continu :
+      on ne les supprime jamais entre deux recherches MediaPipe.
+    */
+    const expressionTarget = {
+      blinkLeft: 0,
+      blinkRight: 0,
+      jawOpen: 0,
+      smile: 0,
+      browUp: 0
+    };
+
+
+    const expressionCurrent = {
+      blinkLeft: 0,
+      blinkRight: 0,
+      jawOpen: 0,
+      smile: 0,
+      browUp: 0
+    };
+
+
+    // ============================================================
+    // MEDIAPIPE
+    // ============================================================
+
+    async function createFaceLandmarker() {
+
+      const vision =
+        await FilesetResolver.forVisionTasks(
+          "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.35/wasm"
+        );
+
+
+      return FaceLandmarker.createFromOptions(
+        vision,
+        {
+          baseOptions: {
+            modelAssetPath:
+              "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task",
+
+            delegate: "GPU"
+          },
+
+          runningMode: "VIDEO",
+
+          numFaces:
+            CONFIG.numFaces,
+
+          minFaceDetectionConfidence:
+            0.5,
+
+          minFacePresenceConfidence:
+            0.5,
+
+          minTrackingConfidence:
+            0.5,
+
+          /*
+            C'est cette option qui fournit les 52 coefficients
+            d'expressions faciales.
+          */
+          outputFaceBlendshapes:
+            true,
+
+          outputFacialTransformationMatrixes:
+            false
+        }
+      );
+    }
+
+
+    // ============================================================
+    // VIDEO DE MINDAR
+    // ============================================================
+
+    async function waitForMindARVideo() {
+
+      return new Promise(
+        (resolve) => {
+
+          const findVideo = () => {
+
+            const found =
+              document.querySelector("video");
+
+
+            if (
+              found &&
+              found.videoWidth > 0 &&
+              found.videoHeight > 0 &&
+              found.readyState >= 2
+            ) {
+
+              resolve(found);
+              return;
+            }
+
+
+            requestAnimationFrame(
+              findVideo
+            );
+          };
+
+
+          findVideo();
+        }
+      );
+    }
+
+
+    // ============================================================
+    // BLENDSHAPES
+    // ============================================================
+
+    function categoriesToMap(
+      classifications
+    ) {
+
+      const map = new Map();
+
+      const categories =
+        classifications?.categories ||
+        [];
+
+
+      for (const category of categories) {
+
+        const name =
+          category.categoryName ||
+          category.displayName;
+
+        map.set(
+          name,
+          category.score ?? 0
+        );
+      }
+
+
+      return map;
+    }
+
+
+    function getBlendshape(
+      map,
+      name
+    ) {
+
+      return map.get(name) || 0;
+    }
+
+
+    function updateExpressionTarget(
+      classifications
+    ) {
+
+      const values =
+        categoriesToMap(
+          classifications
+        );
+
+
+      let blinkLeft =
+        getBlendshape(
+          values,
+          "eyeBlinkLeft"
+        );
+
+
+      let blinkRight =
+        getBlendshape(
+          values,
+          "eyeBlinkRight"
+        );
+
+
+      /*
+        Sur une preview selfie, l'oeil anatomique gauche
+        apparaît du côté opposé visuellement.
+      */
+      if (
+        CONFIG.swapEyesForSelfie
+      ) {
+
+        const temp =
+          blinkLeft;
+
+        blinkLeft =
+          blinkRight;
+
+        blinkRight =
+          temp;
+      }
+
+
+      const smileLeft =
+        getBlendshape(
+          values,
+          "mouthSmileLeft"
+        );
+
+
+      const smileRight =
+        getBlendshape(
+          values,
+          "mouthSmileRight"
+        );
+
+
+      const browInnerUp =
+        getBlendshape(
+          values,
+          "browInnerUp"
+        );
+
+
+      expressionTarget.blinkLeft =
+        blinkLeft;
+
+      expressionTarget.blinkRight =
+        blinkRight;
+
+      expressionTarget.jawOpen =
+        getBlendshape(
+          values,
+          "jawOpen"
+        );
+
+      expressionTarget.smile =
+        (
+          smileLeft +
+          smileRight
+        ) * 0.5;
+
+      expressionTarget.browUp =
+        browInnerUp;
+
+
+      lastValidExpressionAt =
+        performance.now();
+    }
+
+
+    // ============================================================
+    // ANTI-FLICKER
+    // ============================================================
+
+    function updateExpressionSmoothing() {
+
+      const now =
+        performance.now();
+
+
+      const lostFor =
+        now -
+        lastValidExpressionAt;
+
+
+      /*
+        Tant que la perte est courte :
+        ON GARDE la dernière expression.
+        Rien ne disparaît.
+      */
+      if (
+        lastValidExpressionAt > 0 &&
+        lostFor >
+          CONFIG.holdLastExpressionMs
+      ) {
+
+        /*
+          Après une vraie perte prolongée,
+          retour progressif vers le neutre.
+        */
+        for (
+          const key
+          of Object.keys(
+            expressionTarget
+          )
+        ) {
+
+          expressionTarget[key] +=
+            (
+              0 -
+              expressionTarget[key]
+            ) *
+            CONFIG.neutralReturnSpeed;
+        }
+      }
+
+
+      /*
+        Lissage continu à 60 FPS environ,
+        indépendamment des 30 FPS d'inférence MediaPipe.
+      */
+      for (
+        const key
+        of Object.keys(
+          expressionCurrent
+        )
+      ) {
+
+        expressionCurrent[key] +=
+          (
+            expressionTarget[key] -
+            expressionCurrent[key]
+          ) *
+          CONFIG.expressionSmoothing;
+      }
+    }
+
+
+    // ============================================================
+    // ANIMATION DU MODELE DE DEBUG
+    // ============================================================
+
+    function applyExpressions() {
+
+      const blinkLeft =
+        expressionCurrent.blinkLeft;
+
+      const blinkRight =
+        expressionCurrent.blinkRight;
+
+      const jawOpen =
+        expressionCurrent.jawOpen;
+
+      const smile =
+        expressionCurrent.smile;
+
+      const browUp =
+        expressionCurrent.browUp;
+
+
+      // ----------------------------------------------------------
+      // YEUX
+      // ----------------------------------------------------------
+
+      const eyeLeftHeight =
+        Math.max(
+          0.07,
+          1 -
+          blinkLeft * 0.94
+        );
+
+
+      const eyeRightHeight =
+        Math.max(
+          0.07,
+          1 -
+          blinkRight * 0.94
+        );
+
+
+      eyeLeftEl.object3D.scale.y =
+        eyeLeftHeight;
+
+
+      eyeRightEl.object3D.scale.y =
+        eyeRightHeight;
+
+
+      // ----------------------------------------------------------
+      // SOURCILS
+      // ----------------------------------------------------------
+
+      browLeftEl.object3D.position.y =
+        0.165 +
+        browUp * 0.055;
+
+
+      browRightEl.object3D.position.y =
+        0.165 +
+        browUp * 0.055;
+
+
+      // ----------------------------------------------------------
+      // BOUCHE OUVERTE / PAROLE
+      // ----------------------------------------------------------
+
+      /*
+        La cavité noire s'étire verticalement.
+      */
+      mouthOpenEl.object3D.scale.y =
+        1 +
+        jawOpen * 7.5;
+
+
+      mouthOpenEl.object3D.position.y =
+        -0.115 -
+        jawOpen * 0.025;
+
+
+      /*
+        La mâchoire descend avec jawOpen.
+      */
+      jawEl.object3D.position.y =
+        -0.205 -
+        jawOpen * 0.095;
+
+
+      // ----------------------------------------------------------
+      // SOURIRE
+      // ----------------------------------------------------------
+
+      /*
+        Deux segments rouges :
+        extérieur des lèvres vers le haut.
+      */
+      mouthLeftEl.object3D.rotation.z =
+        THREE.MathUtils.degToRad(
+          -smile * 30
+        );
+
+
+      mouthRightEl.object3D.rotation.z =
+        THREE.MathUtils.degToRad(
+          smile * 30
+        );
+
+
+      mouthLeftEl.object3D.position.y =
+        -0.105 +
+        smile * 0.025 -
+        jawOpen * 0.020;
+
+
+      mouthRightEl.object3D.position.y =
+        -0.105 +
+        smile * 0.025 -
+        jawOpen * 0.020;
+
+
+      // ----------------------------------------------------------
+      // DEBUG
+      // ----------------------------------------------------------
+
+      if (CONFIG.debugValues) {
+
+        statusEl.textContent =
+          "Face expressions actives\n" +
+          `blink L : ${blinkLeft.toFixed(2)}\n` +
+          `blink R : ${blinkRight.toFixed(2)}\n` +
+          `jawOpen : ${jawOpen.toFixed(2)}\n` +
+          `smile   : ${smile.toFixed(2)}\n` +
+          `browUp  : ${browUp.toFixed(2)}`;
+      }
+    }
+
+
+    // ============================================================
+    // LOOP
+    // ============================================================
+
+    function loop(timestamp) {
+
+      /*
+        1. MediaPipe n'est lancé que ~30 fois / seconde.
+      */
+      if (
+        faceLandmarker &&
+        video &&
+        video.readyState >= 2
+      ) {
+
+        const interval =
+          1000 /
+          CONFIG.trackingFPS;
+
+
+        if (
+          video.currentTime !==
+            lastVideoTime &&
+          timestamp -
+            lastInferenceAt >=
+            interval
+        ) {
+
+          lastVideoTime =
+            video.currentTime;
+
+          lastInferenceAt =
+            timestamp;
+
+
+          const result =
+            faceLandmarker
+              .detectForVideo(
+                video,
+                performance.now()
+              );
+
+
+          const classifications =
+            result.faceBlendshapes?.[0];
+
+
+          if (classifications) {
+
+            updateExpressionTarget(
+              classifications
+            );
+          }
+        }
+      }
+
+
+      /*
+        2. Mais l'animation visuelle tourne à chaque frame :
+           aucune disparition entre deux inférences.
+      */
+      updateExpressionSmoothing();
+
+      applyExpressions();
+
+
+      requestAnimationFrame(
+        loop
+      );
+    }
+
+
+    // ============================================================
+    // START
+    // ============================================================
+
+    async function startExpressionTracking() {
+
+      if (trackingStarted) {
+        return;
+      }
+
+
+      trackingStarted =
+        true;
+
+
+      try {
+
+        statusEl.textContent =
+          "Chargement Face Landmarker…";
+
+
+        /*
+          Chargement du modèle et attente de la caméra MindAR
+          en parallèle.
+        */
+        const landmarkerPromise =
+          createFaceLandmarker();
+
+
+        video =
+          await waitForMindARVideo();
+
+
+        faceLandmarker =
+          await landmarkerPromise;
+
+
+        statusEl.textContent =
+          "Face expressions prêtes";
+
+
+        requestAnimationFrame(
+          loop
+        );
+
+
+      } catch (error) {
+
+        console.error(error);
+
+        trackingStarted =
+          false;
+
+
+        statusEl.textContent =
+          "Erreur expression tracking :\n" +
+          (
+            error?.message ||
+            String(error)
+          );
+      }
+    }
+
+
+    /*
+      MindAR a créé et démarré sa caméra.
+      On réutilise EXACTEMENT le même <video>.
+    */
+    sceneEl.addEventListener(
+      "arReady",
+      startExpressionTracking,
+      {
+        once: true
+      }
+    );
+
+
+    sceneEl.addEventListener(
+      "arError",
+      () => {
+
+        statusEl.textContent =
+          "MindAR : erreur caméra / tracking";
+      }
+    );
+
+  </script>
+
+</body>
+</html>

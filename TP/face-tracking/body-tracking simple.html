@@ -1,0 +1,1282 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-face-aframe.prod.js"></script>
+
+  <style>
+    html, body {
+      margin: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: transparent;
+    }
+
+    #debug-overlay {
+      position: fixed;
+      inset: 0;
+      width: 100vw;
+      height: 100vh;
+      z-index: 9999;
+      pointer-events: none;
+    }
+
+    #status {
+      position: fixed;
+      left: 12px;
+      bottom: 12px;
+      z-index: 10000;
+      padding: 8px 10px;
+      border-radius: 8px;
+      background: rgba(0,0,0,.68);
+      color: white;
+      font: 12px/1.25 system-ui, sans-serif;
+      pointer-events: none;
+      white-space: pre-line;
+    }
+  </style>
+</head>
+
+<body>
+
+  <canvas id="debug-overlay"></canvas>
+  <div id="status">Initialisation…</div>
+
+  <a-scene
+    mindar-face
+    embedded
+    color-space="sRGB"
+    renderer="colorManagement: true, physicallyCorrectLights: true"
+    vr-mode-ui="enabled: false"
+    device-orientation-permission-ui="enabled: false"
+  >
+    <a-assets>
+
+      <!-- CASQUE ACTUEL : inchangé -->
+      <a-asset-item
+        id="helmet-model"
+        src="./assets/helmet/scene.gltf"
+      ></a-asset-item>
+
+      <!--
+        MODELE COMPLET RIGGÉ.
+
+        Mets le dossier complet du modèle ici :
+        assets/body/scene.gltf
+        assets/body/scene.bin
+        assets/body/textures/...
+      -->
+      <a-asset-item
+        id="body-model"
+        src="./assets/ue4_storm_trooper_rigged__game_ready/scene.gltf"
+      ></a-asset-item>
+
+    </a-assets>
+
+    <a-camera
+      active="false"
+      position="0 0 0"
+      look-controls="enabled: false"
+    ></a-camera>
+
+    <!-- Le casque reste piloté par MindAR Face -->
+    <a-entity
+      id="face-anchor"
+      mindar-face-target="anchorIndex: 1"
+    >
+      <a-gltf-model
+        rotation="0 0 0"
+        position="0 -1.1 -0.75"
+        scale="0.06 0.06 0.06"
+        src="#helmet-model"
+      ></a-gltf-model>
+    </a-entity>
+
+    <!-- Corps complet riggé piloté par MediaPipe -->
+    <a-gltf-model
+      id="body-rig"
+      src="#body-model"
+      visible="false"
+    ></a-gltf-model>
+
+    <!-- Lumière simple pour voir correctement l'armure -->
+    <a-entity light="type: ambient; intensity: 1.4"></a-entity>
+    <a-entity
+      light="type: directional; intensity: 1.6"
+      position="-2 4 3"
+    ></a-entity>
+
+  </a-scene>
+
+
+  <script type="module">
+
+    import {
+      PoseLandmarker,
+      FilesetResolver
+    } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.35/vision_bundle.mjs";
+
+
+    // ============================================================
+    // CONFIGURATION
+    // ============================================================
+
+    const CONFIG = {
+
+      /*
+        MindAR affiche la caméra comme un miroir.
+        true = comportement "miroir" naturel.
+      */
+      mirror: true,
+
+      /*
+        Profondeur virtuelle du corps dans la scène A-Frame.
+        Le scale est recalculé automatiquement à partir des épaules.
+      */
+      bodyDepth: 3.0,
+
+      /*
+        Si le modèle regarde à l'envers :
+        essaye 180 au lieu de 0.
+      */
+      modelRotationY: 0,
+
+      /*
+        Ajustements manuels une fois le tracking correct.
+      */
+      bodyOffsetX: 0,
+      bodyOffsetY: 0,
+      bodyOffsetZ: 0,
+
+      /*
+        Lissage des landmarks servant au positionnement.
+        0 = ne bouge presque pas
+        1 = brut / immédiat
+      */
+      landmarkSmoothing: 0.38,
+
+      /*
+        Lissage des rotations des bones.
+      */
+      boneSmoothing: 0.34,
+
+      /*
+        Lissage de la position et du scale du personnage.
+      */
+      rootSmoothing: 0.32,
+
+      /*
+        On ne cache PAS immédiatement le personnage lorsque
+        MediaPipe perd une frame. Cela supprime beaucoup de flicker.
+      */
+      missingPoseHoldMs: 450,
+
+      /*
+        Pose Landmarker à ~30 FPS pour libérer du temps GPU/CPU
+        à A-Frame / MindAR.
+      */
+      trackingFPS: 30,
+
+      /*
+        Plus faible que ton ancien 0.45 pour éviter :
+        visible / invisible / visible / invisible.
+      */
+      minVisibility: 0.25,
+
+      /*
+        Affiche les landmarks par-dessus la caméra.
+        Mets true si tu veux débugger.
+      */
+      debug2D: false,
+
+      /*
+        Jambes désactivées par défaut car ton objectif principal
+        est torse + bras et elles sont souvent hors champ.
+      */
+      trackLegs: false
+    };
+
+
+    // ============================================================
+    // MEDIAPIPE LANDMARK INDEX
+    // ============================================================
+
+    const NOSE = 0;
+
+    const LEFT_SHOULDER  = 11;
+    const RIGHT_SHOULDER = 12;
+
+    const LEFT_ELBOW     = 13;
+    const RIGHT_ELBOW    = 14;
+
+    const LEFT_WRIST     = 15;
+    const RIGHT_WRIST    = 16;
+
+    const LEFT_HIP       = 23;
+    const RIGHT_HIP      = 24;
+
+    const LEFT_KNEE      = 25;
+    const RIGHT_KNEE     = 26;
+
+    const LEFT_ANKLE     = 27;
+    const RIGHT_ANKLE    = 28;
+
+
+    // ============================================================
+    // BONES DE TON scene.gltf
+    // ============================================================
+
+    /*
+      Ces noms viennent directement de TON modèle.
+      Ils sont déjà remplis avec les vrais noms de l'armature.
+    */
+    const BONE_NAMES = {
+      pelvis: "pelvis_01",
+
+      spine1: "spine_01_02",
+      spine2: "spine_02_03",
+      chest: "spine_03_04",
+
+      clavicleL: "clavicle_l_05",
+      upperArmL: "upperarm_l_06",
+      lowerArmL: "lowerarm_l_07",
+      handL: "hand_l_08",
+
+      clavicleR: "clavicle_r_026",
+      upperArmR: "upperarm_r_027",
+      lowerArmR: "lowerarm_r_028",
+      handR: "hand_r_029",
+
+      neck: "neck_01_047",
+      head: "head_048",
+
+      thighL: "thigh_l_049",
+      calfL: "calf_l_050",
+
+      thighR: "thigh_r_00",
+      calfR: "calf_r_055"
+    };
+
+
+    // ============================================================
+    // DOM / THREE
+    // ============================================================
+
+    const sceneEl = document.querySelector("a-scene");
+    const rigEl = document.querySelector("#body-rig");
+    const statusEl = document.querySelector("#status");
+
+    const debugCanvas = document.querySelector("#debug-overlay");
+    const debugCtx = debugCanvas.getContext("2d");
+
+    const THREE = window.THREE;
+
+    let video = null;
+    let poseLandmarker = null;
+
+    let modelRoot = null;
+    let bones = {};
+    let boneSetup = {};
+
+    let rigReady = false;
+
+    let lastVideoTime = -1;
+    let lastDetectionTimestamp = 0;
+    let lastPoseSeenAt = 0;
+
+    let restShoulderDistance = 1;
+    let pelvisLocal = new THREE.Vector3();
+
+    let currentRootPosition = new THREE.Vector3();
+    let currentScale = null;
+
+    const smoothScreenPoints = new Map();
+
+
+    // ============================================================
+    // CANVAS DEBUG
+    // ============================================================
+
+    function resizeDebugCanvas() {
+      const dpr = window.devicePixelRatio || 1;
+
+      debugCanvas.width = Math.round(window.innerWidth * dpr);
+      debugCanvas.height = Math.round(window.innerHeight * dpr);
+
+      debugCanvas.style.width = `${window.innerWidth}px`;
+      debugCanvas.style.height = `${window.innerHeight}px`;
+
+      debugCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    }
+
+    resizeDebugCanvas();
+    window.addEventListener("resize", resizeDebugCanvas);
+
+
+    // ============================================================
+    // MEDIAPIPE
+    // ============================================================
+
+    async function createPoseLandmarker() {
+
+      const vision = await FilesetResolver.forVisionTasks(
+        "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.35/wasm"
+      );
+
+      return PoseLandmarker.createFromOptions(vision, {
+
+        baseOptions: {
+          modelAssetPath:
+            "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/1/pose_landmarker_full.task",
+
+          delegate: "GPU"
+        },
+
+        runningMode: "VIDEO",
+        numPoses: 1,
+
+        minPoseDetectionConfidence: 0.5,
+        minPosePresenceConfidence: 0.5,
+        minTrackingConfidence: 0.5,
+
+        outputSegmentationMasks: false
+      });
+    }
+
+
+    // ============================================================
+    // CAMERA MINDAR
+    // ============================================================
+
+    async function waitForMindARVideo() {
+
+      return new Promise((resolve) => {
+
+        const search = () => {
+
+          const found = document.querySelector("video");
+
+          if (
+            found &&
+            found.videoWidth > 0 &&
+            found.videoHeight > 0 &&
+            found.readyState >= 2
+          ) {
+            resolve(found);
+            return;
+          }
+
+          requestAnimationFrame(search);
+        };
+
+        search();
+      });
+    }
+
+
+    // ============================================================
+    // OUTILS
+    // ============================================================
+
+    function visibleLandmark(lm) {
+      return lm && (lm.visibility ?? 1) >= CONFIG.minVisibility;
+    }
+
+
+    function midpoint2D(a, b) {
+      return {
+        x: (a.x + b.x) * 0.5,
+        y: (a.y + b.y) * 0.5
+      };
+    }
+
+
+    function landmarkToScreen(lm) {
+
+      const screenW = window.innerWidth;
+      const screenH = window.innerHeight;
+
+      const videoW = video.videoWidth;
+      const videoH = video.videoHeight;
+
+      /*
+        Reproduit le "cover" utilisé par MindAR.
+      */
+      const coverScale = Math.max(
+        screenW / videoW,
+        screenH / videoH
+      );
+
+      const displayedW = videoW * coverScale;
+      const displayedH = videoH * coverScale;
+
+      const cropX = (screenW - displayedW) * 0.5;
+      const cropY = (screenH - displayedH) * 0.5;
+
+      let x = lm.x;
+
+      if (CONFIG.mirror) {
+        x = 1 - x;
+      }
+
+      return {
+        x: x * displayedW + cropX,
+        y: lm.y * displayedH + cropY,
+        visibility: lm.visibility ?? 1
+      };
+    }
+
+
+    function smoothScreenPoint(index, point) {
+
+      const previous = smoothScreenPoints.get(index);
+
+      if (!previous) {
+        const first = { ...point };
+        smoothScreenPoints.set(index, first);
+        return first;
+      }
+
+      const s = CONFIG.landmarkSmoothing;
+
+      const next = {
+        x: THREE.MathUtils.lerp(previous.x, point.x, s),
+        y: THREE.MathUtils.lerp(previous.y, point.y, s),
+        visibility: point.visibility
+      };
+
+      smoothScreenPoints.set(index, next);
+
+      return next;
+    }
+
+
+    /*
+      Convertit un point écran en un point 3D placé sur un plan
+      situé à CONFIG.bodyDepth devant la caméra.
+    */
+    function screenToWorld(screenPoint, depth = CONFIG.bodyDepth) {
+
+      const camera = sceneEl.camera;
+
+      const ndc = new THREE.Vector2(
+        (screenPoint.x / window.innerWidth) * 2 - 1,
+        -(screenPoint.y / window.innerHeight) * 2 + 1
+      );
+
+      const raycaster = new THREE.Raycaster();
+      raycaster.setFromCamera(ndc, camera);
+
+      const cameraPosition = new THREE.Vector3();
+      const cameraForward = new THREE.Vector3();
+
+      camera.getWorldPosition(cameraPosition);
+      camera.getWorldDirection(cameraForward);
+
+      const denominator = raycaster.ray.direction.dot(cameraForward);
+
+      const t = depth / Math.max(0.0001, denominator);
+
+      return cameraPosition
+        .clone()
+        .add(
+          raycaster.ray.direction
+            .clone()
+            .multiplyScalar(t)
+        );
+    }
+
+
+    /*
+      MediaPipe world landmarks -> direction Three.js.
+
+      x : gauche / droite
+      y : MediaPipe descend vers le bas -> on inverse
+      z : MediaPipe devient plus négatif vers la caméra -> on inverse
+
+      En mode miroir on inverse aussi X.
+    */
+    function poseWorldDirection(from, to) {
+
+      let dx = to.x - from.x;
+
+      if (CONFIG.mirror) {
+        dx *= -1;
+      }
+
+      const dy = -(to.y - from.y);
+      const dz = -(to.z - from.z);
+
+      return new THREE.Vector3(dx, dy, dz).normalize();
+    }
+
+
+    // ============================================================
+    // SETUP DU RIG
+    // ============================================================
+
+    function findBone(name) {
+
+      const bone = modelRoot.getObjectByName(name);
+
+      if (!bone) {
+        console.warn(`Bone introuvable : ${name}`);
+      }
+
+      return bone;
+    }
+
+
+    function hideHelmetFromBodyModel() {
+
+      modelRoot.traverse((object) => {
+
+        if (!object.isMesh && !object.isSkinnedMesh) {
+          return;
+        }
+
+        const objectName = (object.name || "").toLowerCase();
+
+        let materialNames = "";
+
+        if (Array.isArray(object.material)) {
+          materialNames = object.material
+            .map(m => m?.name || "")
+            .join(" ")
+            .toLowerCase();
+        } else {
+          materialNames = (object.material?.name || "").toLowerCase();
+        }
+
+        /*
+          Ton GLTF possède un matériau nommé "Helmet".
+          On masque donc uniquement cette partie du modèle complet.
+        */
+        if (
+          objectName.includes("helmet") ||
+          materialNames.includes("helmet")
+        ) {
+          object.visible = false;
+        }
+
+        /*
+          Utile avec un squelette qui bouge beaucoup.
+        */
+        object.frustumCulled = false;
+      });
+    }
+
+
+    function getPointInRigLocal(object3D) {
+
+      const world = new THREE.Vector3();
+
+      object3D.getWorldPosition(world);
+
+      return rigEl.object3D.worldToLocal(world);
+    }
+
+
+    function registerBone(boneKey, childKey) {
+
+      const bone = bones[boneKey];
+      const child = bones[childKey];
+
+      if (!bone || !child) {
+        return;
+      }
+
+      /*
+        child.position est la direction du bone vers son enfant
+        dans le repère local du bone.
+      */
+      const restAxis = child.position
+        .clone()
+        .normalize();
+
+      boneSetup[boneKey] = {
+        bone,
+        restAxis,
+        restQuaternion: bone.quaternion.clone()
+      };
+    }
+
+
+    function initialiseRig() {
+
+      modelRoot = rigEl.getObject3D("mesh");
+
+      if (!modelRoot) {
+        console.error("Impossible de récupérer le modèle 3D.");
+        return;
+      }
+
+      /*
+        Important avant de mesurer la pose de repos.
+      */
+      rigEl.object3D.position.set(0, 0, 0);
+      rigEl.object3D.rotation.set(
+        0,
+        THREE.MathUtils.degToRad(CONFIG.modelRotationY),
+        0
+      );
+      rigEl.object3D.scale.setScalar(1);
+
+      modelRoot.updateMatrixWorld(true);
+
+      hideHelmetFromBodyModel();
+
+      for (const [key, name] of Object.entries(BONE_NAMES)) {
+        bones[key] = findBone(name);
+      }
+
+      /*
+        Vérifie les bones absolument nécessaires.
+      */
+      const required = [
+        "pelvis",
+        "upperArmL",
+        "lowerArmL",
+        "handL",
+        "upperArmR",
+        "lowerArmR",
+        "handR"
+      ];
+
+      const missing = required.filter(key => !bones[key]);
+
+      if (missing.length > 0) {
+        statusEl.textContent =
+          "Bones manquants : " +
+          missing.join(", ");
+
+        return;
+      }
+
+      /*
+        Direction de repos de chaque chaîne.
+      */
+      registerBone("upperArmL", "lowerArmL");
+      registerBone("lowerArmL", "handL");
+
+      registerBone("upperArmR", "lowerArmR");
+      registerBone("lowerArmR", "handR");
+
+      if (CONFIG.trackLegs) {
+        registerBone("thighL", "calfL");
+        registerBone("thighR", "calfR");
+      }
+
+      /*
+        Mesure automatique du modèle pour adapter son scale
+        à la largeur réelle des épaules détectées.
+      */
+      modelRoot.updateMatrixWorld(true);
+
+      const leftShoulderRest = getPointInRigLocal(bones.upperArmL);
+      const rightShoulderRest = getPointInRigLocal(bones.upperArmR);
+
+      restShoulderDistance =
+        leftShoulderRest.distanceTo(rightShoulderRest);
+
+      pelvisLocal = getPointInRigLocal(bones.pelvis);
+
+      rigReady = true;
+
+      console.log("Rig Stormtrooper prêt", {
+        restShoulderDistance,
+        pelvisLocal,
+        bones
+      });
+
+      statusEl.textContent =
+        "Rig chargé — attente de la pose…";
+    }
+
+
+    rigEl.addEventListener("model-loaded", initialiseRig);
+
+
+    // ============================================================
+    // PILOTAGE D'UN BONE
+    // ============================================================
+
+    function driveBone(
+      boneKey,
+      fromIndex,
+      toIndex,
+      worldLandmarks,
+      normalizedLandmarks
+    ) {
+
+      const setup = boneSetup[boneKey];
+
+      if (!setup) {
+        return;
+      }
+
+      /*
+        Ne touche pas au bone si MediaPipe considère le membre
+        comme insuffisamment visible.
+      */
+      if (
+        !visibleLandmark(normalizedLandmarks[fromIndex]) ||
+        !visibleLandmark(normalizedLandmarks[toIndex])
+      ) {
+        return;
+      }
+
+      const targetWorldDirection =
+        poseWorldDirection(
+          worldLandmarks[fromIndex],
+          worldLandmarks[toIndex]
+        );
+
+      const bone = setup.bone;
+
+      /*
+        Le quaternion du parent permet de transformer notre direction
+        cible globale en direction locale au parent du bone.
+      */
+      bone.parent.updateWorldMatrix(true, false);
+
+      const parentWorldQuaternion =
+        new THREE.Quaternion();
+
+      bone.parent.getWorldQuaternion(
+        parentWorldQuaternion
+      );
+
+      const targetDirectionInParent =
+        targetWorldDirection
+          .clone()
+          .applyQuaternion(
+            parentWorldQuaternion
+              .clone()
+              .invert()
+          )
+          .normalize();
+
+      /*
+        Direction du membre dans la pose de repos.
+      */
+      const restDirectionInParent =
+        setup.restAxis
+          .clone()
+          .applyQuaternion(
+            setup.restQuaternion
+          )
+          .normalize();
+
+      /*
+        Rotation nécessaire pour aller de la pose de repos
+        vers la direction détectée.
+      */
+      const deltaQuaternion =
+        new THREE.Quaternion()
+          .setFromUnitVectors(
+            restDirectionInParent,
+            targetDirectionInParent
+          );
+
+      const targetQuaternion =
+        deltaQuaternion
+          .multiply(
+            setup.restQuaternion.clone()
+          );
+
+      /*
+        Le slerp est beaucoup plus stable qu'une copie brute.
+      */
+      bone.quaternion.slerp(
+        targetQuaternion,
+        CONFIG.boneSmoothing
+      );
+
+      bone.updateMatrixWorld(true);
+    }
+
+
+    // ============================================================
+    // POSITION + SCALE DU CORPS COMPLET
+    // ============================================================
+
+    function updateRigRoot(normalizedLandmarks) {
+
+      const raw = {};
+
+      [
+        LEFT_SHOULDER,
+        RIGHT_SHOULDER,
+        LEFT_HIP,
+        RIGHT_HIP
+      ].forEach(index => {
+
+        raw[index] =
+          smoothScreenPoint(
+            index,
+            landmarkToScreen(
+              normalizedLandmarks[index]
+            )
+          );
+      });
+
+
+      if (
+        !visibleLandmark(normalizedLandmarks[LEFT_SHOULDER]) ||
+        !visibleLandmark(normalizedLandmarks[RIGHT_SHOULDER]) ||
+        !visibleLandmark(normalizedLandmarks[LEFT_HIP]) ||
+        !visibleLandmark(normalizedLandmarks[RIGHT_HIP])
+      ) {
+        return;
+      }
+
+
+      const shoulderLWorld =
+        screenToWorld(raw[LEFT_SHOULDER]);
+
+      const shoulderRWorld =
+        screenToWorld(raw[RIGHT_SHOULDER]);
+
+      const targetShoulderDistance =
+        shoulderLWorld.distanceTo(
+          shoulderRWorld
+        );
+
+
+      /*
+        Scale automatique :
+        largeur d'épaules détectée /
+        largeur d'épaules du modèle.
+      */
+      const targetScale =
+        targetShoulderDistance /
+        Math.max(
+          0.0001,
+          restShoulderDistance
+        );
+
+
+      if (currentScale === null) {
+        currentScale = targetScale;
+      } else {
+        currentScale =
+          THREE.MathUtils.lerp(
+            currentScale,
+            targetScale,
+            CONFIG.rootSmoothing
+          );
+      }
+
+
+      const hipScreen =
+        midpoint2D(
+          raw[LEFT_HIP],
+          raw[RIGHT_HIP]
+        );
+
+      const targetHipWorld =
+        screenToWorld(hipScreen);
+
+
+      /*
+        Quaternion fixe du modèle.
+        Si le Stormtrooper est de dos :
+        CONFIG.modelRotationY = 180.
+      */
+      const rootQuaternion =
+        new THREE.Quaternion()
+          .setFromEuler(
+            new THREE.Euler(
+              0,
+              THREE.MathUtils.degToRad(
+                CONFIG.modelRotationY
+              ),
+              0
+            )
+          );
+
+
+      const pelvisOffset =
+        pelvisLocal
+          .clone()
+          .multiplyScalar(currentScale)
+          .applyQuaternion(rootQuaternion);
+
+
+      const wantedRootPosition =
+        targetHipWorld
+          .clone()
+          .sub(pelvisOffset);
+
+
+      wantedRootPosition.x += CONFIG.bodyOffsetX;
+      wantedRootPosition.y += CONFIG.bodyOffsetY;
+      wantedRootPosition.z += CONFIG.bodyOffsetZ;
+
+
+      if (!rigEl.object3D.visible) {
+
+        currentRootPosition.copy(
+          wantedRootPosition
+        );
+
+      } else {
+
+        currentRootPosition.lerp(
+          wantedRootPosition,
+          CONFIG.rootSmoothing
+        );
+      }
+
+
+      rigEl.object3D.position.copy(
+        currentRootPosition
+      );
+
+      rigEl.object3D.quaternion.copy(
+        rootQuaternion
+      );
+
+      rigEl.object3D.scale.setScalar(
+        currentScale
+      );
+
+      rigEl.object3D.visible = true;
+    }
+
+
+    // ============================================================
+    // BODY / ARM TRACKING
+    // ============================================================
+
+    function updateRig(
+      normalizedLandmarks,
+      worldLandmarks
+    ) {
+
+      updateRigRoot(
+        normalizedLandmarks
+      );
+
+
+      /*
+        Important en selfie :
+        visuellement le côté droit de l'utilisateur se retrouve
+        du côté droit de l'écran.
+
+        Or le personnage nous fait face.
+        On croise donc gauche / droite pour obtenir un comportement
+        naturel en miroir.
+      */
+
+      if (CONFIG.mirror) {
+
+        // Bras visible à droite de l'écran
+        driveBone(
+          "upperArmL",
+          RIGHT_SHOULDER,
+          RIGHT_ELBOW,
+          worldLandmarks,
+          normalizedLandmarks
+        );
+
+        driveBone(
+          "lowerArmL",
+          RIGHT_ELBOW,
+          RIGHT_WRIST,
+          worldLandmarks,
+          normalizedLandmarks
+        );
+
+
+        // Bras visible à gauche de l'écran
+        driveBone(
+          "upperArmR",
+          LEFT_SHOULDER,
+          LEFT_ELBOW,
+          worldLandmarks,
+          normalizedLandmarks
+        );
+
+        driveBone(
+          "lowerArmR",
+          LEFT_ELBOW,
+          LEFT_WRIST,
+          worldLandmarks,
+          normalizedLandmarks
+        );
+
+
+        if (CONFIG.trackLegs) {
+
+          driveBone(
+            "thighL",
+            RIGHT_HIP,
+            RIGHT_KNEE,
+            worldLandmarks,
+            normalizedLandmarks
+          );
+
+          driveBone(
+            "thighR",
+            LEFT_HIP,
+            LEFT_KNEE,
+            worldLandmarks,
+            normalizedLandmarks
+          );
+        }
+
+      } else {
+
+        driveBone(
+          "upperArmL",
+          LEFT_SHOULDER,
+          LEFT_ELBOW,
+          worldLandmarks,
+          normalizedLandmarks
+        );
+
+        driveBone(
+          "lowerArmL",
+          LEFT_ELBOW,
+          LEFT_WRIST,
+          worldLandmarks,
+          normalizedLandmarks
+        );
+
+        driveBone(
+          "upperArmR",
+          RIGHT_SHOULDER,
+          RIGHT_ELBOW,
+          worldLandmarks,
+          normalizedLandmarks
+        );
+
+        driveBone(
+          "lowerArmR",
+          RIGHT_ELBOW,
+          RIGHT_WRIST,
+          worldLandmarks,
+          normalizedLandmarks
+        );
+
+
+        if (CONFIG.trackLegs) {
+
+          driveBone(
+            "thighL",
+            LEFT_HIP,
+            LEFT_KNEE,
+            worldLandmarks,
+            normalizedLandmarks
+          );
+
+          driveBone(
+            "thighR",
+            RIGHT_HIP,
+            RIGHT_KNEE,
+            worldLandmarks,
+            normalizedLandmarks
+          );
+        }
+      }
+    }
+
+
+    // ============================================================
+    // DEBUG 2D
+    // ============================================================
+
+    function drawDebugLandmarks(landmarks) {
+
+      if (!CONFIG.debug2D) {
+        return;
+      }
+
+      const indices = [
+        LEFT_SHOULDER,
+        RIGHT_SHOULDER,
+        LEFT_ELBOW,
+        RIGHT_ELBOW,
+        LEFT_WRIST,
+        RIGHT_WRIST,
+        LEFT_HIP,
+        RIGHT_HIP
+      ];
+
+      debugCtx.fillStyle = "white";
+      debugCtx.strokeStyle = "black";
+      debugCtx.lineWidth = 2;
+
+      for (const index of indices) {
+
+        const p =
+          landmarkToScreen(
+            landmarks[index]
+          );
+
+        debugCtx.beginPath();
+        debugCtx.arc(
+          p.x,
+          p.y,
+          5,
+          0,
+          Math.PI * 2
+        );
+
+        debugCtx.fill();
+        debugCtx.stroke();
+      }
+    }
+
+
+    // ============================================================
+    // TRACKING LOOP
+    // ============================================================
+
+    function loop(timestamp) {
+
+      debugCtx.clearRect(
+        0,
+        0,
+        window.innerWidth,
+        window.innerHeight
+      );
+
+
+      const interval =
+        1000 / CONFIG.trackingFPS;
+
+
+      if (
+        poseLandmarker &&
+        rigReady &&
+        video &&
+        video.readyState >= 2 &&
+        video.currentTime !== lastVideoTime &&
+        timestamp - lastDetectionTimestamp >= interval
+      ) {
+
+        lastVideoTime =
+          video.currentTime;
+
+        lastDetectionTimestamp =
+          timestamp;
+
+
+        const result =
+          poseLandmarker.detectForVideo(
+            video,
+            performance.now()
+          );
+
+
+        const landmarks =
+          result.landmarks?.[0];
+
+        const worldLandmarks =
+          result.worldLandmarks?.[0];
+
+
+        if (
+          landmarks &&
+          worldLandmarks
+        ) {
+
+          lastPoseSeenAt =
+            performance.now();
+
+          updateRig(
+            landmarks,
+            worldLandmarks
+          );
+
+          drawDebugLandmarks(
+            landmarks
+          );
+
+          statusEl.textContent =
+            "Pose détectée • rig actif";
+
+        } else {
+
+          /*
+            Au lieu de cacher le personnage dès UNE frame perdue,
+            on attend un peu. C'est le principal anti-flicker.
+          */
+          const missingFor =
+            performance.now() -
+            lastPoseSeenAt;
+
+          if (
+            missingFor >
+            CONFIG.missingPoseHoldMs
+          ) {
+
+            rigEl.object3D.visible =
+              false;
+
+            statusEl.textContent =
+              "Pose perdue";
+
+          }
+        }
+      }
+
+
+      requestAnimationFrame(loop);
+    }
+
+
+    // ============================================================
+    // START
+    // ============================================================
+
+    async function startBodyTracking() {
+
+      try {
+
+        statusEl.textContent =
+          "Chargement de MediaPipe…";
+
+        poseLandmarker =
+          await createPoseLandmarker();
+
+        statusEl.textContent =
+          "MediaPipe prêt — attente caméra…";
+
+        video =
+          await waitForMindARVideo();
+
+        statusEl.textContent =
+          "Caméra prête — attente du rig…";
+
+        requestAnimationFrame(loop);
+
+      } catch (error) {
+
+        console.error(error);
+
+        statusEl.textContent =
+          "Erreur : " +
+          (error?.message || String(error));
+      }
+    }
+
+
+    sceneEl.addEventListener(
+      "arReady",
+      () => {
+        startBodyTracking();
+      }
+    );
+
+  </script>
+
+</body>
+</html>

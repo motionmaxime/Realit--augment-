@@ -1,0 +1,41 @@
+<html>
+
+<head>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <script src="https://aframe.io/releases/1.3.0/aframe.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js"></script>
+    <script>
+        AFRAME.registerComponent('clickhandler', {
+            init: function() {
+                const mabox = document.querySelector('#plan');
+
+                mabox.addEventListener('click', function(ev, target) {
+                    alert('plop');
+                });
+            }
+        });
+    </script>
+
+</head>
+
+<body>
+    <a-scene
+        mindar-image="imageTargetSrc: ./assets/card.mind;"
+        color-space="sRGB" renderer="colorManagement: true, physicallyCorrectLights" vr-mode-ui="enabled: false"
+        device-orientation-permission-ui="enabled: false">
+
+        <a-assets>
+            <img id="card" src="./assets/card.png" />
+            <a-asset-item id="gltf-asset" src="./assets/CesiumMan.gltf"></a-asset-item>
+        </a-assets>
+
+        <a-entity mindar-image-target="targetIndex: 0">
+            <a-plane id="plan" class="clickable" src="#card" position="0 0 0" rotation="0 0 0" clickhandler></a-plane>
+            <a-gltf-model rotation="0 0 0 " position="0 0 0" scale="1 1 1" src="#gltf-asset" />
+        </a-entity>
+
+        <a-camera cursor="fuse: false; rayOrigin: mouse;" raycaster="objects: .clickable" position="0 0 0" look-controls="enabled: false"></a-camera>
+    </a-scene>
+</body>
+
+</html>

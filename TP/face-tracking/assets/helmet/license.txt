@@ -1,0 +1,11 @@
+Model Information:
+* title:	Star Wars Stormtrooper Helmet
+* source:	https://sketchfab.com/3d-models/star-wars-stormtrooper-helmet-1e906433aecd4fab9c298e6c325a42ac
+* author:	Freddan755 (https://sketchfab.com/Freddan755)
+
+Model License:
+* license type:	CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)
+* requirements:	Author must be credited. Commercial use is allowed.
+
+If you use this 3D model in your project be sure to copy paste this credit wherever you share it:
+This work is based on "Star Wars Stormtrooper Helmet" (https://sketchfab.com/3d-models/star-wars-stormtrooper-helmet-1e906433aecd4fab9c298e6c325a42ac) by Freddan755 (https://sketchfab.com/Freddan755) licensed under CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)
