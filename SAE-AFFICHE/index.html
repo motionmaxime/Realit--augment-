@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#11100e">
+  <meta name="referrer" content="strict-origin-when-cross-origin">
+  <title>UTOPIA — Enter the world</title>
+  <link rel="stylesheet" href="assets/fonts/fonts.css">
+  <link rel="stylesheet" href="style.css">
+  <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-face-aframe.prod.js"></script>
+  <script src="face.js"></script>
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <main class="experience">
+    <section class="camera" aria-label="Caméra et filtre Travis Scott">
+      <div id="ar-stage">
+        <a-scene embedded mindar-face="autoStart: false; faceOccluder: false; uiLoading: no; uiScanning: no; uiError: no" renderer="alpha: true; antialias: true; colorManagement: true" xr-mode-ui="enabled: false" device-orientation-permission-ui="enabled: false" loading-screen="enabled: false">
+          <a-camera active="false" position="0 0 0" look-controls="enabled: false" wasd-controls="enabled: false"></a-camera>
+          <a-entity light="type: ambient; intensity: 1.2; color: #ffffff"></a-entity>
+          <a-entity light="type: directional; intensity: 1.6; color: #fff1e2" position="-1 2 3"></a-entity>
+          <a-entity id="face-anchor" mindar-face-target="anchorIndex: 1">
+            <a-entity id="head-scale" scale="10.8 10.8 10.8">
+              <a-gltf-model id="head" src="assets/models/travis-head.glb" position="0 -1.735 -0.112" braid-motion></a-gltf-model>
+            </a-entity>
+          </a-entity>
+        </a-scene>
+      </div>
+      <p id="camera-status" role="status"></p>
+      <div class="camera-actions">
+        <button id="camera-toggle" hidden>Reprendre la caméra</button>
+        <button id="settings-toggle" aria-label="Réglages du masque" aria-expanded="false" aria-controls="settings">⚙</button>
+      </div>
+      <div id="settings" hidden>
+        <label>Taille <input id="mask-size" type="range" min="3.6" max="18" step="0.05" value="10.8"></label>
+        <label>Hauteur <input id="mask-height" type="range" min="-0.5" max="0.5" step="0.01" value="0"></label>
+        <label><input id="motion" type="checkbox" checked> Mouvement des tresses</label>
+        <button id="reset-fit">Réinitialiser</button>
+      </div>
+    </section>
+    <section class="music" aria-label="Les 19 titres d’Utopia">
+      <p id="track-count" aria-live="polite">01 / 19</p>
+      <div id="records" role="group" aria-label="Fais défiler les vinyles pour choisir un titre"></div>
+      <p id="music-status" role="status"></p>
+      <audio id="audio" preload="metadata" playsinline></audio>
+    </section>
+  </main>
+  <noscript>Active JavaScript pour utiliser la caméra et la musique.</noscript>
+</body>
+</html>
