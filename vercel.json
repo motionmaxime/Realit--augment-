@@ -1,0 +1,17 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": null,
+  "outputDirectory": "SAE-AFFICHE",
+  "redirects": [
+    {
+      "source": "/SAE-AFFICHE",
+      "destination": "/",
+      "permanent": true
+    },
+    {
+      "source": "/SAE-AFFICHE/:path*",
+      "destination": "/:path*",
+      "permanent": true
+    }
+  ]
+}

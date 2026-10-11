@@ -15,3 +15,21 @@
     rgba(0, 0, 0, 0.94) 70%,
     #000 90%);
 }
+
+/* Compact player: about 25–33% of a portrait phone viewport. */
+:root { --disc: min(38vw, 18dvh, 170px); }
+.music { padding-top: 8px; }
+#track-count { font-size: 16px; margin-bottom: 8px; }
+#records { gap: 24px; }
+.record-title, .record-card:first-child .record-title {
+  height: 36px;
+  min-height: 36px;
+  font-size: clamp(16px, 4.5vw, 23px);
+  line-height: 1.05;
+  margin-top: 7px;
+}
+#music-status { margin-top: 4px; }
+@media (orientation: landscape) {
+  :root { --disc: min(22vh, 120px); }
+  .record-title, .record-card:first-child .record-title { font-size: 16px !important; }
+}
