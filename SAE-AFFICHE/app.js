@@ -68,13 +68,11 @@ scene.addEventListener('targetLost',()=>{
 $('head').addEventListener('model-error',()=>cameraStatus('Le masque n’a pas chargé. Recharge la page pour réessayer.'));
 const titles=['HYAENA','THANK GOD','MODERN JAM','MY EYES',"GOD’S COUNTRY",'SIRENS','MELTDOWN','FE!N','DELRESTO (ECHOES)','I KNOW ?','TOPIA TWINS','CIRCUS MAXIMUS','PARASAIL','SKITZO','LOST FOREVER','LOOOVE','K-POP','TELEKINESIS','TIL FURTHER NOTICE'];
 const files=["HYAENA.mp3", "THANK-GOD.mp3", "MODERN-JAM.mp3", "MY-EYES.mp3", "GODS-COUNTRY.mp3", "SIRENS.mp3", "MELTDOWN.mp3", "FE!N.mp3", "DELRESTO.mp3", "I-KNOW .mp3", "TOPIA-TWINS.mp3", "CIRCUS-MAXIMUS.mp3", " PARASAIL .mp3", "SKITZO.mp3", "LOST FOREVER.mp3", "LOOOVE.mp3", "K-POP.mp3", "TELEKINESIS .mp3", "TIL-FURTHER-NOTICE.mp3"];
-const colors=['#ded89a','#c87646','#7f9f9b','#afacc7','#c5a166','#bab89b','#c37d72','#b6c47a','#9caaa3','#c8ad84','#adb9d0','#d49769','#a8bfb3','#c2a0a0','#c0b89d','#d1a672','#b1accc','#c7ce9b','#b3b0a3'];
 const audio=$('audio'), records=$('records');
 let selected=0, request=0, scrollTimer, motionRequested=false;
 const cards=titles.map((title,i)=>{
   const button=document.createElement('button'); button.className='record-card';button.type='button';
   button.setAttribute('aria-label',`Lire ${title}`);button.setAttribute('aria-pressed','false');
-  button.style.setProperty('--label',colors[i]);
   const disc=document.createElement('span');disc.className='vinyl';disc.setAttribute('aria-hidden','true');
   const label=document.createElement('span');label.className='vinyl-label';
   const name=document.createElement('span');name.textContent=title;
