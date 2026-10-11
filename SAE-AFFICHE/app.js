@@ -77,9 +77,8 @@ const cards=titles.map((title,i)=>{
   button.style.setProperty('--label',colors[i]);
   const disc=document.createElement('span');disc.className='vinyl';disc.setAttribute('aria-hidden','true');
   const label=document.createElement('span');label.className='vinyl-label';
-  const artist=document.createElement('small');artist.textContent='TRAVIS SCOTT · UTOPIA';
   const name=document.createElement('span');name.textContent=title;
-  label.append(artist,name);disc.append(label);
+  label.append(name);disc.append(label);
   const caption=document.createElement('span');caption.className='record-title';caption.textContent=title;
   button.append(disc,caption);records.append(button);
   button.onclick=()=>{
